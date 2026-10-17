@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PANOPTICON // ŞEFFAFLIK TOPLUMU — İnteraktif Ekran Bağımlılığı Enstalasyonu</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;500;700&family=Cormorant+Garamond:ital,wght@1,500;1,700&family=JetBrains+Mono:wght@300;500;700&display=swap');
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+  body, html {
+    width: 100vw; height: 100vh; background: #000000; color: #f0f4f8;
+    font-family: 'Space Grotesk', sans-serif; overflow: hidden;
+  }
+  #exhibition-stage {
+    position: relative; width: 100%; height: 100%; background: #000000; overflow: hidden;
+  }
+  #webgl-layer, #hud-layer {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  }
+  #webgl-layer { z-index: 2; }
+  #hud-layer { z-index: 3; pointer-events: none; }
+
+  /* Aşırı Aydınlanma (Şeffaflık Şiddeti) Beyaz Körlük Katmanı */
+  #hyper-light-overlay {
+    position: absolute; inset: 0; z-index: 4; pointer-events: none;
+    background: radial-gradient(circle at center, rgba(255,255,255,0.92) 0%, rgba(200,245,255,0.4) 60%, transparent 100%);
+    opacity: 0; transition: opacity 0.2s ease; mix-blend-mode: screen;
+  }
+
+  /* Üst Kuramsal Gösterge Paneli */
+  .top-hud {
+    position: absolute; top: 24px; left: 28px; right: 28px; z-index: 10;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    pointer-events: none; transition: opacity 0.4s;
+  }
+  .concept-box {
+    background: rgba(4, 6, 10, 0.82); backdrop-filter: blur(12px);
+    border-left: 3px solid #ff1e42; padding: 14px 20px; max-width: 540px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+  }
+  .concept-tag {
+    font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #ff1e42;
+    letter-spacing: 2.5px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;
+  }
+  .rec-dot {
+    width: 7px; height: 7px; border-radius: 50%; background: #ff1e42;
+    box-shadow: 0 0 10px #ff1e42; animation: recPulse 1.2s infinite;
+  }
+  @keyframes recPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
+  .concept-title {
+    font-size: 19px; font-weight: 700; letter-spacing: 3px; color: #ffffff;
+  }
+  .han-quote {
+    font-family: 'Cormorant Garamond', serif; font-style: italic;
+    font-size: 16px; color: #cbd5e1; margin-top: 8px; line-height: 1.45;
+  }
+  .han-cite {
+    font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #64748b;
+    margin-top: 4px; letter-spacing: 1px;
+  }
+
+  /* Sağ Şeffaflık / Ekran Bağımlılığı Endeksi */
+  .metrics-panel {
+    background: rgba(4, 6, 10, 0.85); backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.12); padding: 14px 18px;
+    font-family: 'JetBrains Mono', monospace; width: 290px;
+  }
+  .metric-header {
+    font-size: 10px; color: #94a3b8; letter-spacing: 1.5px; margin-bottom: 6px;
+    display: flex; justify-content: space-between;
+  }
+  .meter-bar-bg {
+    width: 100%; height: 6px; background: rgba(255,255,255,0.1);
+    margin-bottom: 12px; overflow: hidden; position: relative;
+  }
+  .meter-bar-fill {
+    height: 100%; width: 15%;
+    background: linear-gradient(90deg, #00f0ff, #ff1e42, #ffffff);
+    transition: width 0.15s linear;
+  }
+  .data-row {
+    font-size: 11px; color: #cbd5e1; display: flex; justify-content: space-between;
+    margin-bottom: 4px;
+  }
+  .data-row span { color: #00f0ff; font-weight: 700; }
+
+  /* Alt Kuramsal Faz Seçici & Sergi Kontrolleri */
+  .bottom-dock {
+    position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%);
+    z-index: 10; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;
+    background: rgba(5, 7, 12, 0.88); backdrop-filter: blur(16px);
+    padding: 10px 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.14);
+    width: 95%; max-width: 1080px; transition: opacity 0.4s;
+  }
+  .phase-btn {
+    background: rgba(255,255,255,0.04); color: #cbd5e1;
+    border: 1px solid rgba(255,255,255,0.12); padding: 8px 13px; border-radius: 6px;
+    font-family: 'Space Grotesk', sans-serif; font-size: 12px; font-weight: 500;
+    cursor: pointer; transition: all 0.2s; letter-spacing: 0.4px;
+  }
+  .phase-btn:hover {
+    background: rgba(255, 30, 66, 0.18); border-color: #ff1e42; color: #fff;
+  }
+  .phase-btn.active {
+    background: linear-gradient(135deg, rgba(255,30,66,0.35), rgba(0,240,255,0.25));
+    border-color: #ff1e42; color: #fff; box-shadow: 0 0 18px rgba(255,30,66,0.35);
+  }
+  .dock-sep { width: 1px; background: rgba(255,255,255,0.15); margin: 0 4px; }
+
+  /* Başlangıç Küratöryel Metin Ekranı */
+  #curator-modal {
+    position: absolute; inset: 0; z-index: 30;
+    background: radial-gradient(circle at center, rgba(14, 8, 16, 0.96) 0%, #000000 100%);
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+    text-align: center; padding: 28px;
+  }
+  .curator-badge {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 3px;
+    color: #ff1e42; border: 1px solid rgba(255,30,66,0.45); padding: 6px 16px;
+    border-radius: 20px; margin-bottom: 18px; background: rgba(255,30,66,0.08);
+  }
+  .curator-title {
+    font-size: 38px; font-weight: 700; letter-spacing: 5px; margin-bottom: 10px;
+    color: #ffffff;
+  }
+  .curator-quote {
+    font-family: 'Cormorant Garamond', serif; font-style: italic; font-size: 20px;
+    color: #00f0ff; max-width: 680px; margin-bottom: 18px; line-height: 1.4;
+  }
+  .curator-desc {
+    max-width: 660px; font-size: 13.5px; color: #94a3b8; line-height: 1.65; margin-bottom: 26px;
+  }
+  .phase-cards {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(195px, 1fr));
+    gap: 12px; width: 100%; max-width: 840px; margin-bottom: 28px; text-align: left;
+  }
+  .p-card {
+    background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1);
+    padding: 13px; border-radius: 8px;
+  }
+  .p-card h4 { font-size: 12px; color: #ff1e42; margin-bottom: 5px; font-family: 'JetBrains Mono', monospace; }
+  .p-card p { font-size: 11.5px; color: #94a3b8; line-height: 1.45; }
+
+  .btn-row { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
+  .enter-btn {
+    background: linear-gradient(90deg, #ff1e42, #b800ff); color: #fff;
+    border: none; padding: 15px 34px; font-size: 14px; font-weight: 700;
+    letter-spacing: 2px; border-radius: 6px; cursor: pointer;
+    box-shadow: 0 0 30px rgba(255,30,66,0.45); transition: all 0.2s;
+  }
+  .enter-btn:hover { transform: scale(1.03); box-shadow: 0 0 45px rgba(255,30,66,0.75); }
+  .ghost-btn {
+    background: rgba(255,255,255,0.06); color: #cbd5e1; border: 1px solid rgba(255,255,255,0.2);
+    padding: 15px 24px; font-size: 13px; letter-spacing: 1.5px; border-radius: 6px; cursor: pointer;
+  }
+  video { display: none; }
+</style>
+</head>
+<body>
+
+<div id="exhibition-stage">
+  <!-- Küratöryel Giriş Ekranı -->
+  <div id="curator-modal">
+    <div class="curator-badge">BYUNG-CHUL HAN // ŞEFFAFLIK TOPLUMU ÜZERİNE ENSTALASYON</div>
+    <div class="curator-title">DİJİTAL PANOPTİKON</div>
+    <div class="curator-quote">
+      "Dijital panoptikonun sakinleri baskıyla değil, içsel bir gereksinimle kendilerini soyup sergilerler. Şeffaflık, gölgeyi ve mesafeyi yok eden bir tahakkümdür."
+    </div>
+    <p class="curator-desc">
+      Bu interaktif holografik enstalasyon, <strong>ekran bağımlılığını</strong> Byung-Chul Han'ın kavramlarıyla görselleştirir. Ekrana baktığınız ve yaklaştığınız her saniye <strong>"Şeffaflık ve Öz-Teşhir Endeksiniz"</strong> yükselir; gölgeniz silinir, yüzünüz sergileme değerine (`#`) indirgenir ve kızıl panoptikon ağlarına hapsolursunuz. Gölgenizi geri kazanmanın tek yolu <strong>ekrandan uzaklaşmak veya kamerayı kapatmaktır.</strong>
+    </p>
+    <div class="phase-cards">
+      <div class="p-card">
+        <h4>01 // DİJİTAL PANOPTİKON</h4>
+        <p>Ekrana yaklaştıkça bedeninizi ekranın köşelerine bağlayan kızıl gözetim iplikleri ve seksek/kafes ızgarası örülür.</p>
+      </div>
+      <div class="p-card">
+        <h4>02 // SERGİLEME DEĞERİ</h4>
+        <p>Yüzün "aurası" yok olur; bedeniniz tamamen `#etiket`, beğeni ve biyometrik veri tipografisine dönüşür.</p>
+      </div>
+      <div class="p-card">
+        <h4>03 // GÖLGENİN ÖLÜMÜ</h4>
+        <p>Aşırı şeffaflık ve ekran ışığı tüm karanlığı/mahremiyeti siler; görüntünüz kör edici bir ışıkla parçalanır.</p>
+      </div>
+      <div class="p-card">
+        <h4>04 // OTO-DÖNGÜ (SERGİ)</h4>
+        <p>İzleyicinin ekrana bakma süresine göre 3 kavramsal evreyi otomatik olarak yaşayan otonom sergi modu.</p>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="enter-btn" id="start-cam-btn">👁️ GÖZETİM ENSTALASYONUNU BAŞLAT (Kamera)</button>
+      <button class="ghost-btn" id="start-sim-btn">✨ KAMERASIZ OTONOM SİMÜLASYON</button>
+    </div>
+  </div>
+
+  <!-- Üst Kuramsal Alıntı ve Şeffaflık Metrikleri -->
+  <div class="top-hud" id="top-hud">
+    <div class="concept-box">
+      <div class="concept-tag"><div class="rec-dot"></div> CANLI ÖZ-TEŞHİR ANALİZİ // BYUNG-CHUL HAN</div>
+      <div class="concept-title" id="phase-heading">EVRE I: DİJİTAL PANOPTİKON & GÖNÜLLÜ GÖZETİM</div>
+      <div class="han-quote" id="phase-quote">
+        "Dijital panoptikonun sakinleri kendilerini özgür sanırlar; oysa kendi kendilerini teşhir ederek gözetim ağını bizzat beslerler."
+      </div>
+      <div class="han-cite">— Byung-Chul Han, Şeffaflık Toplumu (Kontrol Toplumu Bölümü)</div>
+    </div>
+
+    <div class="metrics-panel">
+      <div class="metric-header">
+        <span>ŞEFFAFLIK / BAĞIMLILIK ENDEKSİ</span>
+        <span id="exposure-pct" style="color:#ff1e42; font-weight:700;">18%</span>
+      </div>
+      <div class="meter-bar-bg">
+        <div class="meter-bar-fill" id="exposure-bar"></div>
+      </div>
+      <div class="data-row">MARUZİYET SÜRESİ: <span id="stare-time">0.0 sn</span></div>
+      <div class="data-row">MAHREMİYET / GÖLGE: <span id="shadow-val">%82 KORUNUYOR</span></div>
+      <div class="data-row">SERGİLEME DEĞERİ: <span id="exhibit-val">DÜŞÜK (AURA AKTİF)</span></div>
+    </div>
+  </div>
+
+  <div id="hyper-light-overlay"></div>
+  <video id="webcam" playsinline muted></video>
+  <canvas id="webgl-layer"></canvas>
+  <canvas id="hud-layer"></canvas>
+
+  <!-- Alt Sergi Kontrol Paneli -->
+  <div class="bottom-dock" id="bottom-hud">
+    <button class="phase-btn active" onclick="setPhase(0, this)">🔄 Otonom Döngü (Bağımlılık Süresine Göre)</button>
+    <button class="phase-btn" onclick="setPhase(1, this)">🕸️ 1. Dijital Panoptikon (Kızıl Ağ)</button>
+    <button class="phase-btn" onclick="setPhase(2, this)">#️⃣ 2. Sergileme Değeri (Tipografik Kafes)</button>
+    <button class="phase-btn" onclick="setPhase(3, this)">☀️ 3. Gölgenin Ölümü (Aşırı Şeffaflık)</button>
+    <div class="dock-sep"></div>
+    <button class="phase-btn" onclick="resetExposure()">🌑 Gölgeye Çekil (Sıfırla)</button>
+    <button class="phase-btn" onclick="toggleExhibitionClean()">👁️ Sadece Hologram (Tül/Pleksi Modu)</button>
+    <button class="phase-btn" onclick="captureArtwork()">📸 Enstalasyon Afişi Kaydet</button>
+  </div>
+</div>
+
+<script>
+// ============================================================================
+// KURAMSAL VERİ TABANI (BYUNG-CHUL HAN - ŞEFFAFLIK TOPLUMU ALINTILARI)
+// ============================================================================
+const HAN_THEORY = [
+  {
+    title: "EVRE I: GÖLGE VE AURA (MESAFE KORUNURKEN)",
+    quote: "\"Hakikat ve güzellik, her şeyin çırılçıplak görünür kılınmasında değil; mesafede, örtüde ve gölgede barınır.\""
+  },
+  {
+    title: "EVRE II: DİJİTAL PANOPTİKON & GÖNÜLLÜ TEŞHİR",
+    quote: "\"Dijital panoptikonun sakinleri baskıyla değil, içsel bir gereksinimle kendilerini soyup sergilerler; özgürlük ile kontrol aynılaşmıştır.\""
+  },
+  {
+    title: "EVRE III: SERGİLEME DEĞERİ & YÜZÜN METALILAŞMASI",
+    quote: "\"Şeffaflık toplumunda insan yüzü 'aura'sını yitirir; her şey 'Beğeni' ve görünürlük üretmek zorunda olan bir sergileme yüzeyine dönüşür.\""
+  },
+  {
+    title: "EVRE IV: AŞIRI AYDINLANMA & ŞEFFAFLIK ŞİDDETİ",
+    quote: "\"Şeffaflık tüm negatifliği ve mahremiyeti siler. Ancak aşırı ışık aydınlatmaz; özneyi kendi yansıması içinde kör eder ve tüketir.\""
+  }
+];
+
+// ============================================================================
+// TEMEL DEĞİŞKENLER VE SAHNE KURULUMU
+// ============================================================================
+const stage = document.getElementById('exhibition-stage');
+const webglCanvas = document.getElementById('webgl-layer');
+const hudCanvas = document.getElementById('hud-layer');
+const hudCtx = hudCanvas.getContext('2d');
+const video = document.getElementById('webcam');
+const hyperLight = document.getElementById('hyper-light-overlay');
+
+let width = stage.clientWidth;
+let height = stage.clientHeight;
+let selectedMode = 0; // 0: Otonom Bağımlılık Döngüsü, 1: Panoptikon, 2: Sergileme Değeri, 3: Gölgenin Ölümü
+let activePhase = 1;
+let simMode = false;
+let cleanMode = false;
+
+// Ekran Bağımlılığı ve Öz-Teşhir Metrikleri
+let exposureIndex = 15; // 0 - 100 arası Şeffaflık / Bağımlılık oranı
+let stareSeconds = 0;
+let subjectPresent = false;
+let subjectCenter = { x: 0, y: 0, proximity: 0.5 };
+let handNodes = [];
+
+// 3D Hologram Çözünürlüğü
+const COLS = 128;
+const ROWS = 96;
+const COUNT = COLS * ROWS;
+
+const sampleCanvas = document.createElement('canvas');
+sampleCanvas.width = COLS;
+sampleCanvas.height = ROWS;
+const sampleCtx = sampleCanvas.getContext('2d', { willReadFrequently: true });
+
+// THREE.JS KURULUMU
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(52, width / height, 0.1, 1000);
+camera.position.set(0, 0, 140);
+
+const renderer = new THREE.WebGLRenderer({
+  canvas: webglCanvas,
+  antialias: true,
+  preserveDrawingBuffer: true
+});
+renderer.setSize(width, height);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setClearColor(0x000000, 1);
+
+const artGroup = new THREE.Group();
+scene.add(artGroup);
+
+// 1. VOLÜMETRİK BEDEN AĞI (3D Rölyef Noktalar + Panoptikon Tel-Kafes)
+const geom = new THREE.BufferGeometry();
+const pos = new Float32Array(COUNT * 3);
+const col = new Float32Array(COUNT * 3);
+const zSmooth = new Float32Array(COUNT);
+
+const indices = [];
+for (let r = 0; r < ROWS; r++) {
+  for (let c = 0; c < COLS; c++) {
+    const i = r * COLS + c;
+    const i3 = i * 3;
+    pos[i3] = (c / (COLS - 1) - 0.5) * 120;
+    pos[i3 + 1] = (0.5 - r / (ROWS - 1)) * 90;
+    pos[i3 + 2] = 0;
+    col[i3] = 0; col[i3 + 1] = 0.8; col[i3 + 2] = 1;
+
+    if (c < COLS - 1) indices.push(i, i + 1);
+    if (r < ROWS - 1 && c % 2 === 0) indices.push(i, i + COLS);
+  }
+}
+geom.setIndex(indices);
+geom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+geom.setAttribute('color', new THREE.BufferAttribute(col, 3));
+
+const wireMat = new THREE.LineBasicMaterial({
+  vertexColors: true, transparent: true, opacity: 0.65, blending: THREE.AdditiveBlending
+});
+const wireMesh = new THREE.LineSegments(geom, wireMat);
+artGroup.add(wireMesh);
+
+const ptsMat = new THREE.PointsMaterial({
+  size: 1.7, vertexColors: true, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending
+});
+const ptsMesh = new THREE.Points(geom, ptsMat);
+artGroup.add(ptsMesh);
+
+// 2. "AYNI'NIN CEHENNEMİ" (Narsisistik Ekran Klonu Katmanları)
+const echoMat1 = new THREE.PointsMaterial({
+  size: 1.5, color: 0xff1e42, transparent: true, opacity: 0.0, blending: THREE.AdditiveBlending
+});
+const echoMesh1 = new THREE.Points(geom, echoMat1);
+echoMesh1.position.z = -12;
+artGroup.add(echoMesh1);
+
+const echoMat2 = new THREE.PointsMaterial({
+  size: 1.5, color: 0x00f0ff, transparent: true, opacity: 0.0, blending: THREE.AdditiveBlending
+});
+const echoMesh2 = new THREE.Points(geom, echoMat2);
+echoMesh2.position.z = -24;
+artGroup.add(echoMesh2);
+
+// ============================================================================
+// KONTROLLER VE FAZ GEÇİŞLERİ
+// ============================================================================
+window.setPhase = function(m, btn) {
+  selectedMode = m;
+  document.querySelectorAll('.bottom-dock .phase-btn').forEach((b, idx) => {
+    if (idx < 4) b.classList.remove('active');
+  });
+  if (btn) btn.classList.add('active');
+};
+
+window.resetExposure = function() {
+  exposureIndex = 8;
+  stareSeconds = 0;
+};
+
+window.toggleExhibitionClean = function() {
+  cleanMode = !cleanMode;
+  document.getElementById('top-hud').style.opacity = cleanMode ? '0' : '1';
+  document.getElementById('bottom-hud').style.opacity = cleanMode ? '0.12' : '1';
+};
+
+window.captureArtwork = function() {
+  const out = document.createElement('canvas');
+  out.width = width; out.height = height;
+  const ctx = out.getContext('2d');
+  renderer.render(scene, camera);
+  ctx.drawImage(webglCanvas, 0, 0, width, height);
+  ctx.drawImage(hudCanvas, 0, 0, width, height);
+
+  ctx.fillStyle = '#ff1e42';
+  ctx.font = '700 13px "JetBrains Mono", monospace';
+  ctx.fillText('DİJİTAL PANOPTİKON // BYUNG-CHUL HAN: ŞEFFAFLIK TOPLUMU ENSTALASYONU', 28, height - 24);
+
+  const a = document.createElement('a');
+  a.download = 'SEFFAFLIK_TOPLUMU_ENSTALASYON_' + Date.now() + '.png';
+  a.href = out.toDataURL('image/png');
+  a.click();
+};
+
+function onResize() {
+  width = stage.clientWidth;
+  height = stage.clientHeight;
+  hudCanvas.width = width;
+  hudCanvas.height = height;
+  camera.aspect = width / height;
+  camera.updateProjectionMatrix();
+  renderer.setSize(width, height);
+}
+window.addEventListener('resize', onResize);
+onResize();
+
+// ============================================================================
+// MEDIAPIPE EL VE YAKINLIK TAKİBİ
+// ============================================================================
+const hands = new Hands({
+  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+});
+hands.setOptions({
+  maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6
+});
+hands.onResults((res) => {
+  handNodes = res.multiHandLandmarks || [];
+});
+
+document.getElementById('start-cam-btn').addEventListener('click', async () => {
+  document.getElementById('start-cam-btn').innerText = "GÖZETİM KAMERASI AÇILIYOR...";
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" }
+    });
+    video.srcObject = stream;
+    await video.play();
+    document.getElementById('curator-modal').style.display = 'none';
+
+    async function detectLoop() {
+      if (video.readyState >= 2) await hands.send({ image: video });
+      requestAnimationFrame(detectLoop);
+    }
+    detectLoop();
+    requestAnimationFrame(animate);
+  } catch (e) {
+    simMode = true;
+    document.getElementById('curator-modal').style.display = 'none';
+    requestAnimationFrame(animate);
+  }
+});
+
+document.getElementById('start-sim-btn').addEventListener('click', () => {
+  simMode = true;
+  document.getElementById('curator-modal').style.display = 'none';
+  requestAnimationFrame(animate);
+});
+
+// ============================================================================
+// ANA SANATSAL MOTOR VE GÖZETİM ANALİZİ (60 FPS)
+// ============================================================================
+let clock = 0;
+const socialGlyphs = ['#', '👁', 'LIKE', '1', '0', 'TEŞHİR', '+', 'VERİ'];
+
+function animate() {
+  requestAnimationFrame(animate);
+  clock += 0.022;
+
+  let pixels = null;
+  let activeBrightPixels = 0;
+  let sumX = 0, sumY = 0;
+
+  if (!simMode && video.readyState >= 2) {
+    sampleCtx.save();
+    sampleCtx.scale(-1, 1);
+    sampleCtx.drawImage(video, -COLS, 0, COLS, ROWS);
+    sampleCtx.restore();
+    pixels = sampleCtx.getImageData(0, 0, COLS, ROWS).data;
+  }
+
+  const posArr = geom.attributes.position.array;
+  const colArr = geom.attributes.color.array;
+
+  // 1. KAMERADAN BEDEN YAKINLIĞI VE EKRANA MARUZİYET (ŞEFFAFLIK) HESABI
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const i = r * COLS + c;
+      const i3 = i * 3;
+      const bx = (c / (COLS - 1) - 0.5) * 120;
+      const by = (0.5 - r / (ROWS - 1)) * 90;
+
+      let lum = 0;
+      if (pixels) {
+        const pIdx = i * 4;
+        lum = (0.299 * pixels[pIdx] + 0.587 * pixels[pIdx+1] + 0.114 * pixels[pIdx+2]) / 255;
+      } else {
+        // Kamerasız Simülasyon Silüeti
+        const d = Math.hypot(bx * 0.85, by - Math.sin(clock) * 4);
+        lum = Math.max(0, Math.cos(d * 0.05 - clock * 1.2) * Math.exp(-d * 0.018));
+      }
+
+      if (lum > 0.28) {
+        activeBrightPixels++;
+        sumX += bx;
+        sumY += by;
+      }
+
+      // Evreye göre Z-ekseni deformasyonu (Gölgenin ölümü evresinde derinlik düzleşir/parçalanır)
+      const normExp = exposureIndex / 100;
+      let targetZ = (lum - 0.25) * (58 - normExp * 25);
+
+      // Aşırı şeffaflıkta (Evre 3) titreşim ve parçalanma
+      if (activePhase === 3) {
+        targetZ += (Math.random() - 0.5) * normExp * 24;
+      }
+
+      zSmooth[i] += (targetZ - zSmooth[i]) * 0.25;
+      posArr[i3] = bx;
+      posArr[i3 + 1] = by;
+      posArr[i3 + 2] = zSmooth[i];
+
+      // EVRELERE GÖRE SANATSAL RENK PALETİ
+      const zNorm = Math.max(0, Math.min(1, (zSmooth[i] + 15) / 45));
+
+      if (activePhase === 1) {
+        // Evre 1: Dijital Panoptikon (Kızıl Gözetim Ağları & Koyu Gölge)
+        colArr[i3] = Math.min(1, 0.2 + zNorm * 0.95);
+        colArr[i3 + 1] = zNorm * 0.18;
+        colArr[i3 + 2] = 0.15 + zNorm * 0.35;
+      } else if (activePhase === 2) {
+        // Evre 2: Sergileme Değeri (Soğuk Siber Turkuaz & Neon Macenta Vitrin)
+        colArr[i3] = zNorm * 0.4;
+        colArr[i3 + 1] = Math.min(1, 0.3 + zNorm * 0.75);
+        colArr[i3 + 2] = 1.0;
+      } else {
+        // Evre 3: Gölgenin Ölümü / Aşırı Aydınlanma (Kör Edici Beyaz Şeffaflık)
+        const whiteOut = Math.min(1, zNorm * 1.3 + normExp * 0.5);
+        colArr[i3] = whiteOut;
+        colArr[i3 + 1] = whiteOut;
+        colArr[i3 + 2] = Math.min(1, whiteOut + 0.2);
+      }
+    }
+  }
+
+  geom.attributes.position.needsUpdate = true;
+  geom.attributes.color.needsUpdate = true;
+
+  // 2. BAĞIMLILIK SÜRESİ VE ŞEFFAFLIK ENDEKSİNİ GÜNCELLE
+  const coverage = activeBrightPixels / COUNT;
+  // İzleyici kamerayı eliyle kapatırsa (karanlık) veya uzaklaşırsa gölge geri kazanılır
+  if (coverage > 0.08 && coverage < 0.88) {
+    subjectPresent = true;
+    subjectCenter.x += ((sumX / activeBrightPixels) - subjectCenter.x) * 0.15;
+    subjectCenter.y += ((sumY / activeBrightPixels) - subjectCenter.y) * 0.15;
+    stareSeconds += 0.016;
+    exposureIndex = Math.min(100, exposureIndex + 0.14 + (handNodes.length * 0.12));
+  } else {
+    subjectPresent = false;
+    exposureIndex = Math.max(5, exposureIndex - 0.45);
+  }
+
+  // Aktif Kuramsal Evreyi Belirle
+  if (selectedMode === 0) {
+    if (exposureIndex < 42) activePhase = 1;
+    else if (exposureIndex < 78) activePhase = 2;
+    else activePhase = 3;
+  } else {
+    activePhase = selectedMode;
+  }
+
+  // Üst Kuramsal Alıntı ve Metrikleri Güncelle
+  const theoryIdx = exposureIndex < 22 ? 0 : activePhase;
+  document.getElementById('phase-heading').innerText = HAN_THEORY[theoryIdx].title;
+  document.getElementById('phase-quote').innerText = HAN_THEORY[theoryIdx].quote;
+
+  const expRound = Math.round(exposureIndex);
+  document.getElementById('exposure-pct').innerText = expRound + "%";
+  document.getElementById('exposure-bar').style.width = expRound + "%";
+  document.getElementById('stare-time').innerText = stareSeconds.toFixed(1) + " sn";
+  document.getElementById('shadow-val').innerText = "%" + (100 - expRound) + (expRound > 75 ? " (YOK OLDU)" : " KORUNUYOR");
+  document.getElementById('exhibit-val').innerText = expRound > 70 ? "KRİTİK (SAF META)" : (expRound > 40 ? "YÜKSEK (#TEŞHİR)" : "DÜŞÜK (AURA AKTİF)");
+
+  // Narsisistik Klonlar ve Aşırı Işık (Körlük) Katmanı
+  echoMat1.opacity = activePhase >= 2 ? 0.45 : 0.0;
+  echoMat2.opacity = activePhase === 3 ? 0.55 : 0.0;
+  hyperLight.style.opacity = activePhase === 3 ? Math.min(0.75, (exposureIndex - 65) / 40) : 0;
+
+  // Hafif 3D Salınım
+  artGroup.rotation.y = Math.sin(clock * 0.4) * 0.25;
+  artGroup.rotation.x = Math.cos(clock * 0.3) * 0.1;
+
+  renderer.render(scene, camera);
+
+  // ==========================================================================
+  // 3. 2D GRAFİK TASARIM & KAVRAMSAL GÖZETİM KATMANI (HUD CANVAS)
+  // ==========================================================================
+  hudCtx.clearRect(0, 0, width, height);
+
+  const cx = (subjectCenter.x / 120 + 0.5) * width;
+  const cy = (0.5 - subjectCenter.y / 90) * height;
+
+  // EVRE 1: DİJİTAL PANOPTİKON KIZIL KUKLA İPLİKLERİ & SEKSEK/KAFES IZGARASI
+  if (activePhase === 1 || exposureIndex > 35) {
+    const anchors = [
+      [0, 0], [width * 0.5, 0], [width, 0],
+      [0, height * 0.5], [width, height * 0.5],
+      [0, height], [width * 0.5, height], [width, height]
+    ];
+
+    hudCtx.strokeStyle = 'rgba(255, 30, 66, 0.45)';
+    hudCtx.lineWidth = 1.2;
+    anchors.forEach(([ax, ay], idx) => {
+      hudCtx.beginPath();
+      hudCtx.moveTo(ax, ay);
+      // Gergin Chiharu Shiota tarzı ağ çizgileri
+      const midX = (ax + cx) * 0.5 + Math.sin(clock * 3 + idx) * 18;
+      const midY = (ay + cy) * 0.5 + Math.cos(clock * 3 + idx) * 18;
+      hudCtx.quadraticCurveTo(midX, midY, cx, cy);
+      hudCtx.stroke();
+    });
+
+    // El eklemlerine bağlanan ekstra kukla iplikleri
+    handNodes.forEach((lm) => {
+      [4, 8, 12, 16, 20].forEach(tip => {
+        const hx = (1 - lm[tip].x) * width;
+        const hy = lm[tip].y * height;
+        hudCtx.beginPath();
+        hudCtx.moveTo(hx, 0);
+        hudCtx.lineTo(hx, hy);
+        hudCtx.strokeStyle = 'rgba(255, 30, 66, 0.65)';
+        hudCtx.stroke();
+
+        hudCtx.fillStyle = '#ff1e42';
+        hudCtx.font = '10px "JetBrains Mono", monospace';
+        hudCtx.fillText(`GÖNÜLLÜ_BAĞ_#${tip}`, hx + 6, hy - 6);
+      });
+    });
+
+    // Merkez Panoptikon Gözetim Çerçevesi
+    hudCtx.strokeStyle = '#ff1e42';
+    hudCtx.lineWidth = 1.5;
+    hudCtx.strokeRect(cx - 110, cy - 135, 220, 270);
+    hudCtx.fillStyle = '#ff1e42';
+    hudCtx.font = '700 11px "JetBrains Mono", monospace';
+    hudCtx.fillText(`ÖZNE_KİLİTLENDİ // ÖZ-TEŞHİR: %${expRound}`, cx - 106, cy - 142);
+  }
+
+  // EVRE 2: SERGİLEME DEĞERİ (# ETİKET KAFESİ VE YÜZÜN METALILAŞMASI)
+  if (activePhase === 2 || activePhase === 3) {
+    hudCtx.textAlign = 'center';
+    const cols = 14, rows = 9;
+    const cellW = width / cols, cellH = height / rows;
+
+    for (let r = 1; r < rows - 1; r++) {
+      for (let c = 1; c < cols - 1; c++) {
+        const gx = c * cellW + cellW * 0.5;
+        const gy = r * cellH + cellH * 0.5;
+        const dist = Math.hypot(gx - cx, gy - cy);
+
+        if (dist < 280) {
+          const sym = socialGlyphs[(r * cols + c + Math.floor(clock * 2)) % socialGlyphs.length];
+          hudCtx.fillStyle = dist < 130 ? 'rgba(255, 30, 66, 0.85)' : 'rgba(0, 240, 255, 0.45)';
+          hudCtx.font = `700 ${dist < 130 ? 14 : 11}px "JetBrains Mono", monospace`;
+          hudCtx.fillText(sym, gx, gy);
+
+          // Hashtag / Kafes Hücresi Çizgisi
+          hudCtx.strokeStyle = 'rgba(0, 240, 255, 0.12)';
+          hudCtx.strokeRect(c * cellW, r * cellH, cellW, cellH);
+        }
+      }
+    }
+    hudCtx.textAlign = 'left';
+  }
+}
+</script>
+</body>
+</html>
